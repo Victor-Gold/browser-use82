@@ -132,7 +132,6 @@ def create_ui():
 
 		launch_btn.click(fn=launch_chrome, outputs=chrome_status)
 		kill_btn.click(fn=kill_chrome, outputs=chrome_status)
-		reset_btn.click(fn=reset_agent, outputs=[chrome_status, 'chatbot'])
 
 		gr.Markdown('---')
 
@@ -155,6 +154,7 @@ def create_ui():
 					)
 					send_btn = gr.Button('Send', variant='primary', scale=1)
 
+		reset_btn.click(fn=reset_agent, outputs=[chrome_status, chatbot])
 		send_btn.click(
 			fn=send_task,
 			inputs=[task_input, api_key, model, chatbot],
