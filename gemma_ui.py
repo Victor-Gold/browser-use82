@@ -1,12 +1,6 @@
 """
-Browser Use UI — Gemma edition.
-Features:
-  • Persistent Chrome session (launched once, reused)
-  • Stateful agent with back-and-forth via add_new_task
-  • Pause / Resume / Stop controls while agent is running
-  • Mid-run instruction injection (pause → type → resume with new context)
-  • Skill library (saved prompt templates in skills.json)
-  • Run log for self-improvement reflection
+Browser Use UI — multi-agent edition.
+One Chrome, N concurrent agents each in their own tab.
 """
 import asyncio
 import glob
@@ -14,6 +8,7 @@ import json
 import os
 import subprocess
 import time
+from functools import partial
 from pathlib import Path
 
 import httpx
@@ -28,10 +23,14 @@ CHROME_DEBUG_PORT = 9222
 CHROME_USER_DATA = os.path.join(os.environ.get('TEMP', 'C:\\Temp'), 'browseruse-chrome-profile')
 SKILLS_FILE = Path(__file__).parent / 'skills.json'
 RUNS_LOG = Path(__file__).parent / 'runs_log.json'
+NUM_AGENTS = 3  # number of parallel agent slots
 
 _chrome_proc: subprocess.Popen | None = None
-_agent: Agent | None = None
-_agent_task: asyncio.Task | None = None
+_shared_browser: Browser | None = None
+
+# Per-agent state keyed by slot index 0..NUM_AGENTS-1
+_agents: dict[int, Agent | None] = {i: None for i in range(NUM_AGENTS)}
+_agent_tasks: dict[int, asyncio.Task | None] = {i: None for i in range(NUM_AGENTS)}
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +64,7 @@ def _chrome_is_ready() -> bool:
 
 
 def launch_chrome() -> str:
-	global _chrome_proc
+	global _chrome_proc, _shared_browser
 	if _chrome_is_ready():
 		return f'Chrome already running on port {CHROME_DEBUG_PORT}'
 	chrome = _find_chrome()
@@ -79,17 +78,19 @@ def launch_chrome() -> str:
 	for _ in range(15):
 		time.sleep(1)
 		if _chrome_is_ready():
-			return f'Chrome launched (pid {_chrome_proc.pid}) — ready'
+			_shared_browser = Browser(cdp_url=f'http://localhost:{CHROME_DEBUG_PORT}', keep_alive=True)
+			return f'Chrome launched (pid {_chrome_proc.pid}) — {NUM_AGENTS} agent slots ready'
 	return 'Error: Chrome did not respond in time'
 
 
 def kill_chrome() -> str:
-	global _chrome_proc, _agent, _agent_task
-	if _agent_task and not _agent_task.done():
-		if _agent:
-			_agent.stop()
-	_agent = None
-	_agent_task = None
+	global _chrome_proc, _shared_browser
+	for i in range(NUM_AGENTS):
+		if _agents[i] and _agent_tasks[i] and not _agent_tasks[i].done():
+			_agents[i].stop()
+		_agents[i] = None
+		_agent_tasks[i] = None
+	_shared_browser = None
 	if _chrome_proc and _chrome_proc.poll() is None:
 		_chrome_proc.terminate()
 		_chrome_proc = None
@@ -99,41 +100,45 @@ def kill_chrome() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Agent controls
+# Per-agent controls (slot_id selects which agent)
 # ---------------------------------------------------------------------------
 
-def reset_agent() -> tuple[str, list]:
-	global _agent, _agent_task
-	if _agent_task and not _agent_task.done():
-		if _agent:
-			_agent.stop()
-	_agent = None
-	_agent_task = None
-	return 'Agent reset — next task starts fresh', []
+def pause_agent(slot_id: int) -> str:
+	agent = _agents[slot_id]
+	task = _agent_tasks[slot_id]
+	if agent and task and not task.done():
+		agent.pause()
+		return f'Agent {slot_id+1} paused'
+	return f'Agent {slot_id+1} not running'
 
 
-def pause_agent() -> str:
-	if _agent and _agent_task and not _agent_task.done():
-		_agent.pause()
-		return 'Agent paused — type an instruction below then click Resume'
-	return 'No agent running'
+def stop_agent(slot_id: int) -> str:
+	agent = _agents[slot_id]
+	task = _agent_tasks[slot_id]
+	if agent and task and not task.done():
+		agent.stop()
+		return f'Agent {slot_id+1} stopped'
+	return f'Agent {slot_id+1} not running'
 
 
-def stop_agent() -> str:
-	global _agent, _agent_task
-	if _agent and _agent_task and not _agent_task.done():
-		_agent.stop()
-		return 'Agent stopped'
-	return 'No agent running'
-
-
-async def resume_with_instruction(instruction: str) -> str:
-	if _agent is None:
-		return 'No agent to resume'
+async def resume_agent(slot_id: int, instruction: str) -> str:
+	agent = _agents[slot_id]
+	if agent is None:
+		return f'Agent {slot_id+1} not initialized'
 	if instruction.strip():
-		_agent.add_new_task(instruction)
-	_agent.resume()
-	return 'Agent resumed'
+		agent.add_new_task(instruction)
+	agent.resume()
+	return f'Agent {slot_id+1} resumed'
+
+
+def reset_agent(slot_id: int) -> tuple[str, list]:
+	agent = _agents[slot_id]
+	task = _agent_tasks[slot_id]
+	if agent and task and not task.done():
+		agent.stop()
+	_agents[slot_id] = None
+	_agent_tasks[slot_id] = None
+	return f'Agent {slot_id+1} reset', []
 
 
 # ---------------------------------------------------------------------------
@@ -146,115 +151,98 @@ def _load_skills() -> dict[str, str]:
 	return {}
 
 
-def _save_skills(skills: dict[str, str]) -> None:
-	SKILLS_FILE.write_text(json.dumps(skills, indent=2))
-
-
-def list_skill_names() -> list[str]:
-	return list(_load_skills().keys())
-
-
 def load_skill(name: str) -> str:
 	return _load_skills().get(name, '')
 
 
 def save_skill(name: str, prompt: str) -> str:
 	if not name.strip() or not prompt.strip():
-		return 'Provide both a name and a prompt to save'
+		return 'Provide both a name and a prompt'
 	skills = _load_skills()
 	skills[name.strip()] = prompt.strip()
-	_save_skills(skills)
-	return f'Saved skill "{name}"'
-
-
-def delete_skill(name: str) -> tuple[str, list]:
-	skills = _load_skills()
-	if name in skills:
-		del skills[name]
-		_save_skills(skills)
-		return f'Deleted skill "{name}"', list(skills.keys())
-	return f'Skill "{name}" not found', list(skills.keys())
+	SKILLS_FILE.write_text(json.dumps(skills, indent=2))
+	return f'Saved "{name}"'
 
 
 # ---------------------------------------------------------------------------
-# Run log
+# Run log + reflection
 # ---------------------------------------------------------------------------
 
-def _log_run(task: str, result: str, steps: int) -> None:
+def _log_run(slot_id: int, task: str, result: str) -> None:
 	runs = []
 	if RUNS_LOG.exists():
 		runs = json.loads(RUNS_LOG.read_text())
-	runs.append({'task': task, 'result': result, 'steps': steps,
+	runs.append({'slot': slot_id + 1, 'task': task, 'result': result,
 	             'ts': time.strftime('%Y-%m-%dT%H:%M:%S')})
-	runs = runs[-50:]  # keep last 50
-	RUNS_LOG.write_text(json.dumps(runs, indent=2))
+	RUNS_LOG.write_text(json.dumps(runs[-50:], indent=2))
 
 
 async def reflect_on_runs(api_key: str, model: str) -> str:
 	if not RUNS_LOG.exists():
 		return 'No run history yet.'
-	if api_key.strip():
-		os.environ['GOOGLE_API_KEY'] = api_key
+	key = api_key.strip() or os.getenv('GOOGLE_API_KEY', '')
+	if not key:
+		return 'Error: No Google API key.'
 	runs = json.loads(RUNS_LOG.read_text())[-10:]
-	summary = '\n'.join(f"Task: {r['task']}\nResult: {r['result'][:200]}\nSteps: {r['steps']}" for r in runs)
-	llm = ChatGoogle(model=model)
-	from langchain_core.messages import HumanMessage
-	resp = await llm.ainvoke([HumanMessage(content=
-		f'Analyze these recent browser agent runs and suggest concrete improvements to task prompts or strategies:\n\n{summary}'
-	)])
-	return resp.content
+	summary = '\n'.join(
+		f"Agent {r['slot']} | Task: {r['task']}\nResult: {r['result'][:200]}" for r in runs
+	)
+	prompt = f'Analyze these recent browser agent runs and suggest concrete improvements to prompts or strategies:\n\n{summary}'
+	async with httpx.AsyncClient(timeout=30) as client:
+		resp = await client.post(
+			f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',
+			params={'key': key},
+			json={'contents': [{'parts': [{'text': prompt}]}]},
+		)
+		resp.raise_for_status()
+		data = resp.json()
+	return data['candidates'][0]['content']['parts'][0]['text']
 
 
 # ---------------------------------------------------------------------------
-# Main task runner
+# Task runner
 # ---------------------------------------------------------------------------
 
-async def _run_agent_task() -> tuple[str, int]:
-	global _agent
-	agent_history = await _agent.run()
+async def _run_agent(slot_id: int) -> tuple[str, int]:
+	agent_history = await _agents[slot_id].run()
 	result = agent_history.final_result() or 'Done — check the browser.'
-	steps = agent_history.number_of_steps() if hasattr(agent_history, 'number_of_steps') else 0
+	steps = getattr(agent_history, 'number_of_steps', lambda: 0)()
 	return result, steps
 
 
-async def send_task(task: str, api_key: str, model: str, history: list) -> tuple[list, str]:
-	global _agent, _agent_task
-
+async def send_task(slot_id: int, task: str, api_key: str, model: str, history: list) -> tuple[list, str]:
 	def msg(role: str, content: str) -> dict:
 		return {'role': role, 'content': content}
 
 	if not task.strip():
 		return history, ''
-
 	if not api_key.strip() and not os.getenv('GOOGLE_API_KEY'):
 		return history + [msg('user', task), msg('assistant', 'Error: No Google API key.')], ''
-
 	if api_key.strip():
 		os.environ['GOOGLE_API_KEY'] = api_key
-
 	if not _chrome_is_ready():
-		return history + [msg('user', task), msg('assistant', 'Error: Chrome not running. Click Launch Chrome first.')], ''
+		return history + [msg('user', task), msg('assistant', 'Error: Launch Chrome first.')], ''
 
 	try:
 		llm = ChatGoogle(model=model)
 
-		if _agent is None:
+		if _agents[slot_id] is None:
 			browser = Browser(cdp_url=f'http://localhost:{CHROME_DEBUG_PORT}', keep_alive=True)
-			_agent = Agent(task=task, llm=llm, browser=browser)
+			_agents[slot_id] = Agent(task=task, llm=llm, browser=browser, max_failures=50)
 		else:
-			_agent.llm = llm
-			_agent.add_new_task(task)
+			_agents[slot_id].llm = llm
+			_agents[slot_id].add_new_task(task)
 
-		_agent_task = asyncio.create_task(_run_agent_task())
-		result, steps = await _agent_task
-		_log_run(task, result, steps)
+		_agent_tasks[slot_id] = asyncio.create_task(_run_agent(slot_id))
+		result, _ = await _agent_tasks[slot_id]
+		_log_run(slot_id, task, result)
 		return history + [msg('user', task), msg('assistant', result)], ''
 
 	except asyncio.CancelledError:
-		_agent = None
-		return history + [msg('user', task), msg('assistant', 'Agent stopped.')], ''
+		_agents[slot_id] = None
+		return history + [msg('user', task), msg('assistant', 'Stopped.')], ''
 	except Exception as e:
-		_agent = None
+		_agents[slot_id] = None
 		return history + [msg('user', task), msg('assistant', f'Error: {e}')], ''
 
 
@@ -263,73 +251,95 @@ async def send_task(task: str, api_key: str, model: str, history: list) -> tuple
 # ---------------------------------------------------------------------------
 
 def create_ui():
-	with gr.Blocks(title='Browser Use — Gemma', theme=gr.themes.Soft()) as interface:
-		gr.Markdown('# Browser Use Frontend')
+	skills = list(_load_skills().keys())
 
-		# Chrome + agent controls
+	with gr.Blocks(title='Browser Use — Multi-Agent') as interface:
+		gr.Markdown('# Browser Use — Multi-Agent')
+
+		# Global Chrome controls
 		with gr.Row():
-			launch_btn = gr.Button('Launch Chrome', variant='secondary', scale=1)
-			kill_btn = gr.Button('Stop Chrome', variant='stop', scale=1)
-			pause_btn = gr.Button('⏸ Pause', scale=1)
-			stop_btn = gr.Button('⏹ Stop Agent', variant='stop', scale=1)
-			reset_btn = gr.Button('↺ Reset Agent', variant='secondary', scale=1)
-			status = gr.Textbox(label='Status', interactive=False, scale=3)
+			launch_btn = gr.Button('Launch Chrome', variant='secondary')
+			kill_btn = gr.Button('Stop Chrome', variant='stop')
+			chrome_status = gr.Textbox(label='Chrome Status', interactive=False, scale=3)
 
-		launch_btn.click(fn=launch_chrome, outputs=status)
-		kill_btn.click(fn=kill_chrome, outputs=status)
-		pause_btn.click(fn=pause_agent, outputs=status)
-		stop_btn.click(fn=stop_agent, outputs=status)
+		launch_btn.click(fn=launch_chrome, outputs=chrome_status)
+		kill_btn.click(fn=kill_chrome, outputs=chrome_status)
 
-		# Mid-run injection row (visible always; active when paused)
+		# Shared config + skills (outside tabs so it applies to all agents)
 		with gr.Row():
-			inject_box = gr.Textbox(label='Inject instruction (while paused)', scale=4,
-			                        placeholder='Type a correction or new direction, then Resume…')
-			resume_btn = gr.Button('▶ Resume', variant='primary', scale=1)
-
-		resume_btn.click(fn=resume_with_instruction, inputs=inject_box, outputs=status)
-
-		gr.Markdown('---')
-
-		with gr.Row():
-			# Left: config + skills
 			with gr.Column(scale=1):
 				api_key = gr.Textbox(label='Google API Key (optional if in .env)', type='password')
 				model = gr.Dropdown(
 					choices=['gemma-4-31b-it', 'gemini-2.5-flash', 'gemini-2.5-pro'],
 					label='Model', value='gemma-4-31b-it',
 				)
-
-				gr.Markdown('### Skill Library')
-				skill_dropdown = gr.Dropdown(choices=list_skill_names(), label='Load a skill', interactive=True)
-				load_skill_btn = gr.Button('Load into task box')
-				skill_name_box = gr.Textbox(label='Skill name (to save current task as skill)', placeholder='e.g. browse_x_top_posts')
-				save_skill_btn = gr.Button('Save as skill')
-				skill_status = gr.Textbox(label='Skill status', interactive=False)
-
-				gr.Markdown('### Self-Improvement')
-				reflect_btn = gr.Button('Reflect on recent runs')
-				reflect_out = gr.Textbox(label='Reflection', lines=6, interactive=False)
-
-			# Right: chat
-			with gr.Column(scale=2):
-				chatbot = gr.Chatbot(label='Conversation', height=450)
+			with gr.Column(scale=1):
+				skill_dropdown = gr.Dropdown(choices=skills, label='Load skill into Agent 1 task box')
+				skill_name_box = gr.Textbox(label='Save current task as skill (name)')
 				with gr.Row():
-					task_input = gr.Textbox(label='Task / Follow-up', placeholder='What should the agent do?', scale=4)
-					send_btn = gr.Button('Send', variant='primary', scale=1)
+					load_skill_btn = gr.Button('Load')
+					save_skill_btn = gr.Button('Save')
+				skill_status = gr.Textbox(label='', interactive=False)
+			with gr.Column(scale=1):
+				reflect_btn = gr.Button('Reflect on recent runs')
+				reflect_out = gr.Textbox(label='Self-improvement suggestions', lines=5, interactive=False)
 
-		# Wire up reset after chatbot is defined
-		reset_btn.click(fn=reset_agent, outputs=[status, chatbot])
-
-		# Skills
-		load_skill_btn.click(fn=load_skill, inputs=skill_dropdown, outputs=task_input)
-		save_skill_btn.click(fn=save_skill, inputs=[skill_name_box, task_input], outputs=skill_status)
-
-		# Reflect
 		reflect_btn.click(fn=reflect_on_runs, inputs=[api_key, model], outputs=reflect_out)
 
-		# Send task
-		send_btn.click(fn=send_task, inputs=[task_input, api_key, model, chatbot], outputs=[chatbot, task_input])
-		task_input.submit(fn=send_task, inputs=[task_input, api_key, model, chatbot], outputs=[chatbot, task_input])
+		gr.Markdown('---')
+
+		# One tab per agent slot
+		agent_task_inputs = []  # for skill loading into agent 1
+
+		with gr.Tabs():
+			for slot_id in range(NUM_AGENTS):
+				with gr.Tab(label=f'Agent {slot_id + 1}'):
+					with gr.Row():
+						p_btn = gr.Button('⏸ Pause', scale=1)
+						s_btn = gr.Button('⏹ Stop', variant='stop', scale=1)
+						r_btn = gr.Button('↺ Reset', variant='secondary', scale=1)
+						slot_status = gr.Textbox(label='Status', interactive=False, scale=3)
+
+					with gr.Row():
+						inject_box = gr.Textbox(label='Inject instruction (while paused)', scale=4)
+						resume_btn = gr.Button('▶ Resume', variant='primary', scale=1)
+
+					chatbot = gr.Chatbot(label=f'Agent {slot_id + 1} conversation', height=350)
+
+					with gr.Row():
+						task_input = gr.Textbox(
+							label='Task / Follow-up',
+							placeholder=f'What should Agent {slot_id + 1} do?',
+							scale=4,
+						)
+						send_btn = gr.Button('Send', variant='primary', scale=1)
+
+					if slot_id == 0:
+						agent_task_inputs.append(task_input)
+
+					# Wire controls — use partial to capture slot_id
+					p_btn.click(fn=partial(pause_agent, slot_id), outputs=slot_status)
+					s_btn.click(fn=partial(stop_agent, slot_id), outputs=slot_status)
+					r_btn.click(fn=partial(reset_agent, slot_id), outputs=[slot_status, chatbot])
+					resume_btn.click(
+						fn=partial(resume_agent, slot_id),
+						inputs=inject_box, outputs=slot_status,
+					)
+					send_btn.click(
+						fn=partial(send_task, slot_id),
+						inputs=[task_input, api_key, model, chatbot],
+						outputs=[chatbot, task_input],
+					)
+					task_input.submit(
+						fn=partial(send_task, slot_id),
+						inputs=[task_input, api_key, model, chatbot],
+						outputs=[chatbot, task_input],
+					)
+
+		# Skill loading goes into Agent 1's task box
+		if agent_task_inputs:
+			load_skill_btn.click(fn=load_skill, inputs=skill_dropdown, outputs=agent_task_inputs[0])
+			save_skill_btn.click(fn=save_skill, inputs=[skill_name_box, agent_task_inputs[0]], outputs=skill_status)
 
 	return interface
 
