@@ -86,24 +86,23 @@ async def send_task(task: str, api_key: str, model: str, history: list) -> tuple
 	if not task.strip():
 		return history, ''
 
+	def msg(role: str, content: str) -> dict:
+		return {'role': role, 'content': content}
+
 	if not api_key.strip() and not os.getenv('GOOGLE_API_KEY'):
-		history = history + [{'role': 'user', 'content': task}, {'role': 'assistant', 'content': 'Error: No Google API key provided.'}]
-		return history, ''
+		return history + [msg('user', task), msg('assistant', 'Error: No Google API key provided.')], ''
 
 	if api_key.strip():
 		os.environ['GOOGLE_API_KEY'] = api_key
 
 	if not _chrome_is_ready():
-		history = history + [{'role': 'user', 'content': task}, {'role': 'assistant', 'content': 'Error: Chrome is not running. Click Launch Chrome first.'}]
-		return history, ''
-
-	history = history + [{'role': 'user', 'content': task}]
+		return history + [msg('user', task), msg('assistant', 'Error: Chrome is not running. Click Launch Chrome first.')], ''
 
 	try:
 		llm = ChatGoogle(model=model)
 
 		if _agent is None:
-			browser = Browser(cdp_url=f'http://localhost:{CHROME_DEBUG_PORT}')
+			browser = Browser(cdp_url=f'http://localhost:{CHROME_DEBUG_PORT}', keep_alive=True)
 			_agent = Agent(task=task, llm=llm, browser=browser)
 		else:
 			_agent.llm = llm
@@ -111,13 +110,11 @@ async def send_task(task: str, api_key: str, model: str, history: list) -> tuple
 
 		agent_history = await _agent.run()
 		result = agent_history.final_result() or 'Done — no text result extracted. Check the browser.'
-		history = history + [{'role': 'assistant', 'content': result}]
+		return history + [msg('user', task), msg('assistant', result)], ''
 
 	except Exception as e:
 		_agent = None
-		history = history + [{'role': 'assistant', 'content': f'Error: {e}'}]
-
-	return history, ''
+		return history + [msg('user', task), msg('assistant', f'Error: {e}')], ''
 
 
 def create_ui():
@@ -145,7 +142,7 @@ def create_ui():
 				gr.Markdown('*The agent remembers context between tasks. Click **Reset Agent** to start fresh.*')
 
 			with gr.Column(scale=2):
-				chatbot = gr.Chatbot(label='Conversation', height=400, type='messages', elem_id='chatbot')
+				chatbot = gr.Chatbot(label='Conversation', height=400, elem_id='chatbot')
 				with gr.Row():
 					task_input = gr.Textbox(
 						label='Task / Follow-up',
