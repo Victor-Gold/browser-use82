@@ -286,6 +286,7 @@ class LocalBrowserWatchdog(BaseWatchdog):
 				('chrome', r'%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe'),
 				('chrome', r'%PROGRAMFILES%\Google\Chrome\Application\chrome.exe'),
 				('chrome', r'%PROGRAMFILES(X86)%\Google\Chrome\Application\chrome.exe'),
+				('chromium', f'{playwright_path}\\chromium-*\\chrome-win64\\chrome.exe'),
 				('chromium', f'{playwright_path}\\chromium-*\\chrome-win\\chrome.exe'),
 				('chromium', r'C:\Program Files\Chromium\Application\chrome.exe'),
 				('chromium', r'C:\Program Files (x86)\Chromium\Application\chrome.exe'),
@@ -295,6 +296,7 @@ class LocalBrowserWatchdog(BaseWatchdog):
 				('msedge', r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'),
 				('msedge', r'C:\Program Files\Microsoft\Edge\Application\msedge.exe'),
 				('msedge', r'%LOCALAPPDATA%\Microsoft\Edge\Application\msedge.exe'),
+				('chromium', f'{playwright_path}\\chromium_headless_shell-*\\chrome-win64\\chrome.exe'),
 				('chromium', f'{playwright_path}\\chromium_headless_shell-*\\chrome-win\\chrome.exe'),
 			]
 		else:
