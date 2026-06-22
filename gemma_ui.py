@@ -3,7 +3,7 @@ import os
 from dotenv import load_dotenv
 import gradio as gr
 
-from browser_use import Agent, Browser, ChatGoogle
+from browser_use import Agent, Browser, BrowserProfile, ChatGoogle
 
 load_dotenv()
 
@@ -22,9 +22,10 @@ async def run_browser_task(
 		os.environ['GOOGLE_API_KEY'] = api_key
 
 	try:
-		browser = None
 		if use_debug_browser:
 			browser = Browser(cdp_url=f'http://localhost:{debug_port}')
+		else:
+			browser = Browser(browser_profile=BrowserProfile(enable_default_extensions=False))
 
 		llm = ChatGoogle(model=model)
 		agent = Agent(task=task, llm=llm, browser=browser)

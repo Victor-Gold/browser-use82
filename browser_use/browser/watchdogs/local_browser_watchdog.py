@@ -143,17 +143,12 @@ class LocalBrowserWatchdog(BaseWatchdog):
 				self.logger.debug(
 					f'[LocalBrowserWatchdog] 📂 user_data_dir={profile.user_data_dir}, profile_directory={profile.profile_directory}'
 				)
-				self.logger.warning(f'[LocalBrowserWatchdog] DEBUG launching: {browser_path}')
-				self.logger.warning(f'[LocalBrowserWatchdog] DEBUG cdp port: {debug_port}')
 				subprocess = await asyncio.create_subprocess_exec(
 					browser_path,
 					*launch_args,
 					stdout=asyncio.subprocess.DEVNULL,
 					stderr=asyncio.subprocess.DEVNULL,
 				)
-				self.logger.warning(f'[LocalBrowserWatchdog] DEBUG pid={subprocess.pid}')
-				await asyncio.sleep(2)
-				self.logger.warning(f'[LocalBrowserWatchdog] DEBUG process returncode after 2s: {subprocess.returncode}')
 
 				# Convert to psutil.Process
 				process = psutil.Process(subprocess.pid)
