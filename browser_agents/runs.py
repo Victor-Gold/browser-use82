@@ -4,16 +4,25 @@ import time
 
 import httpx
 
-from .config import RUNS_LOG
+from .config import RUNS_LOG, RESULTS_DIR
 
 
 def log_run(slot_id: int, task: str, result: str) -> None:
+	ts = time.strftime('%Y-%m-%dT%H:%M:%S')
+
+	# Append to JSON run log
 	runs = []
 	if RUNS_LOG.exists():
 		runs = json.loads(RUNS_LOG.read_text())
-	runs.append({'slot': slot_id + 1, 'task': task, 'result': result,
-	             'ts': time.strftime('%Y-%m-%dT%H:%M:%S')})
+	runs.append({'slot': slot_id + 1, 'task': task, 'result': result, 'ts': ts})
 	RUNS_LOG.write_text(json.dumps(runs[-50:], indent=2))
+
+	# Write individual markdown result file
+	RESULTS_DIR.mkdir(exist_ok=True)
+	safe_task = ''.join(c if c.isalnum() or c in ' -_' else '' for c in task)[:60].strip()
+	filename = f"{ts.replace(':', '-')}_agent{slot_id+1}_{safe_task}.md"
+	md = f'# Agent {slot_id+1} Result\n\n**Task:** {task}\n\n**Time:** {ts}\n\n---\n\n{result}\n'
+	(RESULTS_DIR / filename).write_text(md, encoding='utf-8')
 
 
 async def reflect_on_runs(api_key: str, model: str) -> str:
