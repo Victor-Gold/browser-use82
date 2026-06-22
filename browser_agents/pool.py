@@ -3,7 +3,7 @@ import os
 
 from browser_use import Agent, Browser, ChatGoogle
 
-from .chrome import chrome_port, slot_is_ready
+from .chrome import chrome_port, slot_is_ready, launch_slot
 from .config import NUM_AGENTS
 from .runs import log_run
 
@@ -69,7 +69,10 @@ async def send_task(slot_id: int, task: str, api_key: str, model: str, history: 
 	if api_key.strip():
 		os.environ['GOOGLE_API_KEY'] = api_key
 	if not slot_is_ready(slot_id):
-		return history + [msg('user', task), msg('assistant', f'Error: Launch Chrome first (port {chrome_port(slot_id)} not ready).')], ''
+		# Auto-launch this slot's Chrome rather than hard-failing
+		launch_msg = await asyncio.get_event_loop().run_in_executor(None, lambda: launch_slot(slot_id))
+		if not slot_is_ready(slot_id):
+			return history + [msg('user', task), msg('assistant', f'Error: {launch_msg}')], ''
 
 	try:
 		llm = ChatGoogle(model=model)

@@ -156,6 +156,59 @@ Connection management lives in `browser_use/mcp/client.py`.
 - **Return `ActionResult` with structured content** to help agents reason better
 - **Run pre-commit hooks** before making PRs
 
+## Browser Agents UI (`browser_agents/` + `gemma_ui.py`)
+
+A custom multi-agent automation layer built on top of this library. **Do not confuse with the core library code.**
+
+### Entry point
+```
+.venv/Scripts/python.exe gemma_ui.py
+```
+Runs a NiceGUI dark-theme web UI at `http://127.0.0.1:7860`.
+
+### Package structure (`browser_agents/`)
+| File | Responsibility |
+|---|---|
+| `config.py` | Constants: `NUM_AGENTS=3`, `CHROME_BASE_PORT=9222`, file paths |
+| `chrome.py` | Per-slot Chrome launch (`launch_slot`), all-at-once (`launch_chrome`), kill, readiness check |
+| `pool.py` | Agent state dict, `send_task`, pause/stop/resume/reset, auto-launches Chrome if slot not ready |
+| `skills.py` | JSON skill library (`skills.json`). `save_skill` returns updated name list for live dropdown refresh |
+| `runs.py` | Appends to `runs_log.json` (last 50) + writes individual markdown files to `results/` per completed run |
+| `orchestrator.py` | LLM-driven orchestration loop — dispatches browser agents as tools, thinks between calls |
+| `ui_nicegui.py` | NiceGUI layout: header, config/skills/reflect row, Orchestrator tab + 3 Agent tabs |
+
+### Chrome isolation
+Each agent slot gets its own Chrome process on a dedicated port and user-data directory:
+- Agent 1 → port 9222, profile `browseruse-chrome-profile-0`
+- Agent 2 → port 9223, profile `browseruse-chrome-profile-1`
+- Agent 3 → port 9224, profile `browseruse-chrome-profile-2`
+
+Chrome is **lazy-launched** — `send_task` auto-starts the slot's Chrome if not already running. "Launch All Chrome" in the header pre-launches all three at once. Each agent tab also has its own per-slot launch/kill buttons.
+
+### Two operational modes
+
+**Direct mode** — use Agent 1/2/3 tabs individually. User sends tasks, agent responds in chat. Pause/inject/resume/reset all work per-slot. Results saved to `results/`.
+
+**Orchestrator mode** — give a high-level goal in the Orchestrator tab. An LLM loop decides autonomously which browser agents to dispatch and when (as tools), reads their results, and continues reasoning until it calls `finish`. The reasoning log shows each dispatch and return. Both the admin (UI) and the orchestrator LLM can call browser agents — same `pool.send_task` underneath, two entry points.
+
+### Model
+Primary: `gemma-4-31b-it` (Google AI free tier, flaky — `max_failures=50` so it retries through 500s).
+No fallback LLM configured — Flash's free tier is 20 req/day, useless for long runs.
+
+### Key design decisions to preserve
+- `concurrency_limit=None` on all Gradio/NiceGUI send handlers — required for true parallel multi-agent execution
+- `keep_alive=True` on Browser — prevents session teardown between follow-up tasks on the same agent
+- `agent._agents[slot_id] = None` on CancelledError/Exception — forces fresh Agent on next task after a crash
+- Orchestrator uses raw httpx REST calls to Gemini API (not LangChain) — `langchain_core` is not a direct dependency
+- Skills dropdown updates live: `save_skill()` returns `(status, updated_names_list)` and the UI sets `skill_select.options`
+
+### Files outside the package
+- `gemma_ui.py` — 5-line entry point
+- `skills.json` — persisted skill library
+- `runs_log.json` — last 50 run records
+- `results/` — per-run markdown files (`YYYY-MM-DDTHH-MM-SS_agentN_task.md`)
+- `usage/` — operator guidance docs
+
 ## important-instruction-reminders
 Do what has been asked; nothing more, nothing less.
 NEVER create files unless they're absolutely necessary for achieving your goal.

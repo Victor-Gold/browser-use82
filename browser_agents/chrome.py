@@ -44,20 +44,36 @@ def find_chrome() -> str:
 	raise RuntimeError('No Chrome/Chromium found.')
 
 
+def _spawn_proc(slot_id: int, chrome_exe: str) -> None:
+	port = chrome_port(slot_id)
+	user_data = chrome_user_data(slot_id)
+	os.makedirs(user_data, exist_ok=True)
+	_chrome_procs[slot_id] = subprocess.Popen(
+		[chrome_exe, f'--remote-debugging-port={port}',
+		 f'--user-data-dir={user_data}',
+		 '--no-first-run', '--no-default-browser-check'],
+		stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+	)
+
+
+def launch_slot(slot_id: int) -> str:
+	"""Launch Chrome for a single agent slot and wait until ready."""
+	if slot_is_ready(slot_id):
+		return f'Agent {slot_id+1} already running on port {chrome_port(slot_id)}'
+	_spawn_proc(slot_id, find_chrome())
+	for _ in range(15):
+		time.sleep(1)
+		if slot_is_ready(slot_id):
+			return f'Agent {slot_id+1} ready on port {chrome_port(slot_id)}'
+	return f'Error: Agent {slot_id+1} Chrome did not start on port {chrome_port(slot_id)}'
+
+
 def launch_chrome() -> str:
+	"""Launch Chrome for all agent slots simultaneously."""
 	chrome = find_chrome()
 	for slot_id in range(NUM_AGENTS):
-		if slot_is_ready(slot_id):
-			continue
-		port = chrome_port(slot_id)
-		user_data = chrome_user_data(slot_id)
-		os.makedirs(user_data, exist_ok=True)
-		_chrome_procs[slot_id] = subprocess.Popen(
-			[chrome, f'--remote-debugging-port={port}',
-			 f'--user-data-dir={user_data}',
-			 '--no-first-run', '--no-default-browser-check'],
-			stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-		)
+		if not slot_is_ready(slot_id):
+			_spawn_proc(slot_id, chrome)
 	for _ in range(15):
 		time.sleep(1)
 		if all(slot_is_ready(i) for i in range(NUM_AGENTS)):
@@ -66,16 +82,19 @@ def launch_chrome() -> str:
 	failed = [str(chrome_port(i)) for i in range(NUM_AGENTS) if not slot_is_ready(i)]
 	status = f'Ready on ports: {", ".join(ready)}'
 	if failed:
-		status += f' | Failed: {", ".join(failed)}'
+		status += f'  |  Failed: {", ".join(failed)}'
 	return status
 
 
+def kill_slot(slot_id: int) -> None:
+	proc = _chrome_procs[slot_id]
+	if proc and proc.poll() is None:
+		proc.terminate()
+	_chrome_procs[slot_id] = None
+
+
 def kill_all_chrome(stop_agent_fn) -> str:
-	"""stop_agent_fn(slot_id) is called before killing Chrome for each slot."""
 	for i in range(NUM_AGENTS):
 		stop_agent_fn(i)
-		proc = _chrome_procs[i]
-		if proc and proc.poll() is None:
-			proc.terminate()
-		_chrome_procs[i] = None
+		kill_slot(i)
 	return 'All Chrome instances stopped'
