@@ -226,11 +226,16 @@ async def send_task(slot_id: int, task: str, api_key: str, model: str, history: 
 	try:
 		llm = ChatGoogle(model=model)
 
+		fallback_llm = ChatGoogle(model='gemini-2.5-flash')
+
 		if _agents[slot_id] is None:
 			browser = Browser(cdp_url=f'http://localhost:{CHROME_DEBUG_PORT}', keep_alive=True)
-			_agents[slot_id] = Agent(task=task, llm=llm, browser=browser, max_failures=50)
+			_agents[slot_id] = Agent(task=task, llm=llm, browser=browser,
+			                         fallback_llm=fallback_llm, max_failures=50)
 		else:
 			_agents[slot_id].llm = llm
+			_agents[slot_id]._fallback_llm = fallback_llm
+			_agents[slot_id]._using_fallback_llm = False
 			_agents[slot_id].add_new_task(task)
 
 		_agent_tasks[slot_id] = asyncio.create_task(_run_agent(slot_id))
