@@ -1,9 +1,8 @@
 from dotenv import load_dotenv
 load_dotenv()
 
-from browser_agents.ui import create_ui
+from nicegui import ui
+from browser_agents.ui_nicegui import build_ui
 
-if __name__ == '__main__':
-	demo = create_ui()
-	demo.queue(default_concurrency_limit=None)
-	demo.launch(server_name='127.0.0.1', server_port=7860, share=False)
+build_ui()
+ui.run(host='127.0.0.1', port=7860, title='Browser Agents', dark=True, reload=False)
