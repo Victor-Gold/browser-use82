@@ -57,33 +57,54 @@ def _extract_json(raw: str):
 _SYSTEM = f"""You are an AI orchestrator with access to {NUM_AGENTS} browser agents (slots 0–{NUM_AGENTS-1}).
 Each agent controls a real Chrome browser and can navigate, click, type, and extract information.
 
-At each step you MUST respond with exactly one JSON action. Choose from:
+YOUR ENTIRE RESPONSE MUST BE A SINGLE JSON OBJECT. NO prose. NO explanation. NO markdown. JUST the JSON.
+
+Choose one of these actions:
 
 1. Call a single agent:
    {{"action": "call_agent", "slot_id": 0, "task": "precise instruction for the browser agent"}}
 
-2. Call multiple agents in parallel (use when tasks are independent):
+2. Call multiple agents in parallel (when tasks are independent):
    {{"action": "call_agents_parallel", "tasks": [{{"slot_id": 0, "task": "..."}}, {{"slot_id": 1, "task": "..."}}]}}
 
-3. Finish when you have enough information:
-   {{"action": "finish", "answer": "comprehensive final answer"}}
+3. Finish ONLY after agents have run and returned results:
+   {{"action": "finish", "answer": "comprehensive final answer based on agent results"}}
 
 Rules:
 - slot_id must be 0, 1, or 2
-- Don't repeat a task an agent already completed unless you need updated information
-- Be specific in task instructions — agents work best with clear, self-contained instructions
-- Return "finish" as soon as the goal is achievable from the information gathered
+- DO NOT call "finish" as your first action — you must dispatch at least one agent first
+- Be specific and complete in task instructions — agents need self-contained instructions
+- Do not describe what you will do, just output the JSON action
 """
 
 
 async def _decide(goal: str, history: list[dict], model: str, api_key: str) -> dict:
 	conv = '\n'.join(f"[{m['role']}] {m['content']}" for m in history)
-	prompt = f'{_SYSTEM}\n\nGOAL: {goal}\n\n{"CONVERSATION:\n" + conv if conv else "(first step)"}\n\nYour next action (JSON only):'
+	prompt = (
+		f'{_SYSTEM}\n\nGOAL: {goal}\n\n'
+		f'{"CONVERSATION:\n" + conv if conv else "(first step — you must dispatch an agent)"}'
+		f'\n\nRespond with JSON only:'
+	)
 	raw = await _llm(prompt, model, api_key)
 	parsed = _extract_json(raw)
 	if isinstance(parsed, dict) and 'action' in parsed:
 		return parsed
-	# If LLM didn't return valid JSON, treat raw text as a finish
+
+	# LLM gave prose — retry with a harder nudge
+	retry_prompt = (
+		f'{prompt}\n\nWARNING: Your last response was not valid JSON. '
+		f'Respond with ONLY a JSON object, nothing else. Example: '
+		f'{{"action": "call_agent", "slot_id": 0, "task": "..."}}'
+	)
+	raw2 = await _llm(retry_prompt, model, api_key)
+	parsed2 = _extract_json(raw2)
+	if isinstance(parsed2, dict) and 'action' in parsed2:
+		return parsed2
+
+	# Still no JSON — if this is the first step, force a dispatch instead of finishing
+	if not history:
+		return {'action': 'call_agent', 'slot_id': 0, 'task': goal}
+
 	return {'action': 'finish', 'answer': raw}
 
 
@@ -123,9 +144,9 @@ async def orchestrate(
 
 		# ── finish ────────────────────────────────────────────────────────
 		if action == 'finish':
-			answer = decision.get('answer', 'Done.')
-			on_finish(answer)
-			return answer
+			on_finish(decision.get('answer', 'Done.'))
+			await asyncio.sleep(0)
+			return decision.get('answer', 'Done.')
 
 		# ── call_agent ────────────────────────────────────────────────────
 		elif action == 'call_agent':
@@ -133,10 +154,12 @@ async def orchestrate(
 			subtask = decision.get('task', task)
 			on_thought(f'Step {step}: dispatching Agent {slot_id+1}')
 			on_agent_start(slot_id, subtask)
+			await asyncio.sleep(0)  # flush UI before blocking on agent run
 			history.append({'role': 'orchestrator', 'content': f'→ Agent {slot_id+1}: {subtask}'})
 
 			result = await _run_agent(slot_id, subtask, api_key, model)
 			on_agent_result(slot_id, subtask, result)
+			await asyncio.sleep(0)  # flush result to UI
 			history.append({'role': f'agent_{slot_id+1}', 'content': result})
 
 		# ── call_agents_parallel ──────────────────────────────────────────
