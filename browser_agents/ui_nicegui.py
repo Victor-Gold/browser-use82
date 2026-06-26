@@ -17,6 +17,7 @@ from .pool import (
 	hard_stop,
 )
 from .runs import reflect_on_runs
+from .settings import get_setting, set_setting
 from .skills import load_skills, load_skill, save_skill
 
 
@@ -74,6 +75,12 @@ def build_ui() -> None:
 				['gemma-4-31b-it', 'gemini-2.5-flash', 'gemini-2.5-pro'],
 				value='gemma-4-31b-it', label='Model',
 			).classes('w-full')
+			context_input = ui.textarea(
+				label='Default context (account, URLs, preferences)',
+				placeholder='e.g. My X/Twitter handle is @victorrgold. My following page: https://x.com/victorrgold/following',
+				value=get_setting('context'),
+			).classes('w-full').props('rows=3')
+			context_input.on('blur', lambda: set_setting('context', context_input.value))
 
 		with ui.card().classes('flex-1 dark'):
 			ui.label('Skills Library').classes('font-semibold mb-1')
@@ -130,94 +137,182 @@ def build_ui() -> None:
 		# ── Orchestrator panel ───────────────────────────────────────────────
 		with ui.tab_panel(orch_tab):
 			with ui.card().classes('w-full dark'):
-				ui.label('Orchestrator — give a high-level goal, agents converge on it').classes('font-semibold mb-2 text-gray-300')
 
-				with ui.row().classes('w-full gap-3 items-end'):
-					orch_task_input = ui.input(
-						label='High-level goal',
-						placeholder='e.g. Research the top 3 AI companies and compare their products',
+				# Mutable orchestrator state
+				orch_state: dict = {
+					'running': False,
+					'ask_future': None,    # asyncio.Future when waiting for user reply
+					'injection': None,     # pending mid-run user message
+				}
+
+				with ui.row().classes('items-center gap-3 mb-2'):
+					ui.label('🧠 Orchestrator').classes('font-semibold text-gray-200')
+					ui.space()
+					orch_status_badge = ui.badge('Idle', color='grey')
+
+				# Full conversation log (thoughts + dispatches + results + user messages)
+				orch_scroll = ui.scroll_area().classes('w-full rounded').style(
+					'height:460px; background:#0d1117; padding:12px;'
+				)
+				with orch_scroll:
+					orch_log = ui.column().classes('w-full gap-0')
+
+				# Input row — serves as: start / inject / answer question
+				with ui.row().classes('w-full gap-2 mt-3 items-end'):
+					orch_input = ui.input(
+						label='Goal / message',
+						placeholder='Type a high-level goal to start, or send a message while running…',
 					).classes('flex-1')
-					orch_run_btn = ui.button('Orchestrate', icon='hub').props('color=indigo')
+					orch_send_btn = ui.button('Start', icon='play_arrow').props('color=indigo')
+					orch_stop_btn = ui.button('Stop', icon='stop').props('flat color=red size=sm')
 
-				orch_status = ui.label('Idle').classes('text-sm text-gray-400 mt-2')
+				def _olog(html: str):
+					with orch_log:
+						ui.html(html)
+					orch_scroll.scroll_to(percent=1.0)
 
-				# Live reasoning log
-				ui.label('Reasoning log').classes('text-xs text-gray-500 mt-3')
-				orch_log_scroll = ui.scroll_area().classes('w-full rounded').style(
-					'height:160px; background:#0d1117; padding:10px;'
-				)
-				with orch_log_scroll:
-					orch_log_col = ui.column().classes('w-full gap-0')
+				def _olog_user(msg: str):
+					safe = msg.replace('<', '&lt;').replace('>', '&gt;')
+					_olog(f'<div class="user-msg"><b>👤 You:</b> {safe}</div>')
 
-				# Final answer
-				ui.label('Final answer').classes('text-xs text-gray-500 mt-3')
-				orch_synth_scroll = ui.scroll_area().classes('w-full rounded').style(
-					'height:160px; background:#111827; padding:10px;'
-				)
-				with orch_synth_scroll:
-					orch_synth_col = ui.column().classes('w-full')
+				def _olog_thought(msg: str):
+					safe = msg.replace('<', '&lt;').replace('>', '&gt;')
+					_olog(f'<div class="orch-plan"><b>🧠 Orchestrator:</b> {safe}</div>')
 
-				async def run_orchestrator():
-					task = orch_task_input.value.strip()
-					if not task:
-						ui.notify('Enter a goal first', type='warning')
+				def _olog_question(msg: str):
+					safe = msg.replace('<', '&lt;').replace('>', '&gt;')
+					_olog(f'<div style="background:#2d1b69;border-left:3px solid #a78bfa;padding:8px 12px;margin:3px 0;border-radius:4px;font-size:.88em"><b>❓ Orchestrator asks:</b> {safe}</div>')
+
+				def _olog_dispatch(slot_id: int, task: str):
+					safe = task.replace('<', '&lt;').replace('>', '&gt;')
+					_olog(f'<div class="user-msg"><b>→ Agent {slot_id+1}:</b> {safe}</div>')
+
+				def _olog_result(slot_id: int, result: str):
+					safe = result.replace('<', '&lt;').replace('>', '&gt;')
+					_olog(f'<div class="agent-msg"><b>← Agent {slot_id+1}:</b> {safe}</div>')
+
+				def _olog_finish(text: str):
+					safe = text.replace('<', '&lt;').replace('>', '&gt;')
+					_olog(f'<div class="orch-synth"><b>✅ Final answer:</b> {safe}</div>')
+
+				# ── Send handler ─────────────────────────────────────────────
+				async def on_orch_send():
+					msg = orch_input.value.strip()
+					if not msg:
 						return
-					orch_run_btn.props('disable')
-					orch_log_col.clear()
-					orch_synth_col.clear()
-					orch_status.set_text('Running…')
+					orch_input.set_value('')
 
-					def _log(html: str):
-						with orch_log_col:
-							ui.html(html)
-						orch_log_scroll.scroll_to(percent=1.0)
+					# Case 1: orchestrator waiting for user answer
+					if orch_state['ask_future'] and not orch_state['ask_future'].done():
+						_olog_user(msg)
+						orch_state['ask_future'].set_result(msg)
+						orch_send_btn.set_text('Inject')
+						orch_status_badge.set_text('Running')
+						orch_status_badge.props('color=green')
+						return
 
-					def on_thought(msg: str):
-						orch_status.set_text(msg)
-						_log(f'<div class="orch-plan"><b>🧠 Orchestrator:</b> {msg}</div>')
+					# Case 2: orchestrator running — inject message
+					if orch_state['running']:
+						_olog_user(f'[Injected] {msg}')
+						orch_state['injection'] = msg
+						ui.notify('Message injected into next step', type='info')
+						return
+
+					# Case 3: start new orchestration
+					orch_log.clear()
+					orch_state['running'] = True
+					orch_state['ask_future'] = None
+					orch_state['injection'] = None
+					orch_send_btn.set_text('Inject')
+					orch_send_btn.props('color=teal')
+					orch_stop_btn.props(remove='disable')
+					orch_status_badge.set_text('Running')
+					orch_status_badge.props('color=green')
+					_olog_user(msg)
+
+					def on_thought(text: str):
+						orch_status_badge.set_text(text[:40])
+						_olog_thought(text)
 
 					def on_agent_start(slot_id: int, subtask: str):
-						safe = subtask.replace('<', '&lt;').replace('>', '&gt;')
-						_log(f'<div class="user-msg"><b>→ Agent {slot_id+1} dispatched:</b> {safe}</div>')
+						_olog_dispatch(slot_id, subtask)
+						col = refs['chat_cols'].get(slot_id)
+						if col:
+							with col:
+								safe = subtask.replace('<', '&lt;').replace('>', '&gt;')
+								ui.html(f'<div class="user-msg"><b>[Orchestrator]</b> {safe}</div>')
 
-					def on_agent_result(slot_id: int, subtask: str, result: str):
-						safe = result.replace('<', '&lt;').replace('>', '&gt;')
-						_log(f'<div class="agent-msg"><b>← Agent {slot_id+1} returned:</b> {safe}</div>')
-						# Mirror into the agent's own tab
+					def on_agent_result(slot_id: int, _subtask: str, result: str):
+						_olog_result(slot_id, result)
 						col = refs['chat_cols'].get(slot_id)
 						sc  = refs['chat_scrolls'].get(slot_id)
 						if col:
+							safe = result.replace('<', '&lt;').replace('>', '&gt;')
 							with col:
-								ui.html(f'<div class="user-msg"><b>[Orchestrator]</b> {subtask.replace("<","&lt;").replace(">","&gt;")}</div>')
 								ui.html(f'<div class="agent-msg"><b>Agent {slot_id+1}:</b> {safe}</div>')
 						if sc:
 							sc.scroll_to(percent=1.0)
 
 					def on_finish(text: str):
-						safe = text.replace('<', '&lt;').replace('>', '&gt;')
-						orch_synth_col.clear()
-						with orch_synth_col:
-							ui.html(f'<div class="orch-synth">{safe}</div>')
-						orch_synth_scroll.scroll_to(percent=1.0)
+						_olog_finish(text)
+
+					async def on_ask_user(question: str) -> str:
+						_olog_question(question)
+						orch_send_btn.set_text('Answer')
+						orch_send_btn.props('color=amber')
+						orch_status_badge.set_text('Waiting for you')
+						orch_status_badge.props('color=orange')
+						loop = asyncio.get_event_loop()
+						future = loop.create_future()
+						orch_state['ask_future'] = future
+						await asyncio.sleep(0)
+						return await future
+
+					def get_injection() -> str | None:
+						val = orch_state['injection']
+						orch_state['injection'] = None
+						return val
 
 					try:
 						await orchestrate(
-							task=task,
+							task=msg,
 							api_key=api_key_input.value,
 							model=model_select.value,
 							on_thought=on_thought,
 							on_agent_start=on_agent_start,
 							on_agent_result=on_agent_result,
 							on_finish=on_finish,
+							on_ask_user=on_ask_user,
+							skills=load_skills(),
+							context=context_input.value,
+							get_injection=get_injection,
 						)
-						orch_status.set_text('Done.')
+						orch_status_badge.set_text('Done')
+						orch_status_badge.props('color=blue')
+					except asyncio.CancelledError:
+						orch_status_badge.set_text('Stopped')
+						orch_status_badge.props('color=grey')
 					except Exception as e:
-						orch_status.set_text(f'Error: {e}')
-						ui.notify(str(e), type='negative')
+						_olog(f'<div style="color:#f87171;padding:6px">Error: {e}</div>')
+						orch_status_badge.set_text('Error')
+						orch_status_badge.props('color=red')
 					finally:
-						orch_run_btn.props(remove='disable')
+						orch_state['running'] = False
+						orch_state['ask_future'] = None
+						orch_send_btn.set_text('Start')
+						orch_send_btn.props('color=indigo')
+						orch_stop_btn.props('disable')
 
-				orch_run_btn.on('click', run_orchestrator)
+				def on_orch_stop():
+					if orch_state['ask_future'] and not orch_state['ask_future'].done():
+						orch_state['ask_future'].cancel()
+					orch_state['running'] = False
+					ui.notify('Orchestrator stopped', type='warning')
+
+				orch_send_btn.on('click', on_orch_send)
+				orch_input.on('keydown.enter', on_orch_send)
+				orch_stop_btn.on('click', on_orch_stop)
+				orch_stop_btn.props('disable')
 
 		# ── Per-agent panels ──────────────────────────────────────────────────
 		for slot_id in range(NUM_AGENTS):
