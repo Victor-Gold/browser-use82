@@ -238,7 +238,7 @@ def build_ui() -> None:
 									badge.props('color=red')
 							return _
 
-						async def mk_launch_slot(s=slot_id, badge=slot_badge):
+						def mk_launch_slot(s=slot_id, badge=slot_badge):
 							async def _():
 								badge.set_text('launching…')
 								badge.props('color=orange')
