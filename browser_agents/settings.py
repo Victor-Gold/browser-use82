@@ -1,7 +1,7 @@
 import json
-from .config import SKILLS_FILE
+from pathlib import Path
 
-_SETTINGS_FILE = SKILLS_FILE.parent / 'settings.json'
+_SETTINGS_FILE = Path(__file__).parent.parent / 'settings.json'
 
 
 def load_settings() -> dict:
