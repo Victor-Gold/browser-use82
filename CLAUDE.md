@@ -164,7 +164,7 @@ A custom multi-agent automation layer built on top of this library. **Do not con
 ```
 .venv/Scripts/python.exe gemma_ui.py
 ```
-Runs a NiceGUI dark-theme web UI at `http://127.0.0.1:7860`.
+Runs a FastHTML (fast.ai) dark-theme web UI at `http://127.0.0.1:7860`.
 
 ### Package structure (`browser_agents/`)
 | File | Responsibility |
@@ -175,7 +175,7 @@ Runs a NiceGUI dark-theme web UI at `http://127.0.0.1:7860`.
 | `skills.py` | JSON skill library (`skills.json`). `save_skill` returns updated name list for live dropdown refresh |
 | `runs.py` | Appends to `runs_log.json` (last 50) + writes individual markdown files to `results/` per completed run |
 | `orchestrator.py` | LLM-driven orchestration loop — dispatches browser agents as tools, thinks between calls |
-| `ui_nicegui.py` | NiceGUI layout: header, config/skills/reflect row, Orchestrator tab + 3 Agent tabs |
+| `ui_fasthtml.py` | FastHTML layout: header, config/skills/reflect row, Orchestrator tab + 3 Agent tabs. Live updates stream over a single `/ws` WebSocket (HTMX `hx-swap-oob`); one-shot actions are plain HTMX POST routes |
 
 ### Chrome isolation
 Each agent slot gets its own Chrome process on a dedicated port and user-data directory:
@@ -196,11 +196,13 @@ Primary: `gemma-4-31b-it` (Google AI free tier, flaky — `max_failures=50` so i
 No fallback LLM configured — Flash's free tier is 20 req/day, useless for long runs.
 
 ### Key design decisions to preserve
-- `concurrency_limit=None` on all Gradio/NiceGUI send handlers — required for true parallel multi-agent execution
+- Long-running work (orchestrator runs, agent task sends) is spawned as `asyncio.create_task` so the WebSocket stays free to receive injects/answers/stops mid-run — required for true parallel multi-agent execution
+- Live UI updates are broadcast as out-of-band HTML fragments (`hx-swap-oob`) to every connected client via the `_broadcast`/`_emit` helpers in `ui_fasthtml.py`
 - `keep_alive=True` on Browser — prevents session teardown between follow-up tasks on the same agent
 - `agent._agents[slot_id] = None` on CancelledError/Exception — forces fresh Agent on next task after a crash
 - Orchestrator uses raw httpx REST calls to Gemini API (not LangChain) — `langchain_core` is not a direct dependency
-- Skills dropdown updates live: `save_skill()` returns `(status, updated_names_list)` and the UI sets `skill_select.options`
+- Skills dropdown updates live: `save_skill()` returns `(status, updated_names_list)`; the UI rebuilds `#skill-select` via an OOB swap (`_skill_select(oob=True)`)
+- API key + model live server-side in the `CONFIG` dict so background tasks can read them; the orchestrator/agent forms only carry their text field
 
 ### Files outside the package
 - `gemma_ui.py` — 5-line entry point
