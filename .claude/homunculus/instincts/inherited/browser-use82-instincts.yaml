@@ -1,0 +1,318 @@
+# Instincts generated from https://github.com/Victor-Gold/browser-use82
+# Generated: 2026-06-30T12:30:18.350Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: browser-use82-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/Victor-Gold/browser-use82
+---
+
+# Browser Use82 Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: refactor, style
+
+## Evidence
+
+- 2 commits analyzed
+- Detected conventional commit pattern
+- Examples: refactor: rewrite multi-agent UI in FastHTML, style: polish FastHTML UI — gradients, glow, depth, empty states
+
+---
+id: browser-use82-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/Victor-Gold/browser-use82
+---
+
+# Browser Use82 Commit Length
+
+## Action
+
+Write moderate-length commit messages (~54 characters)
+
+## Evidence
+
+- Average commit message length: 54 chars
+- Based on 2 commits
+
+---
+id: browser-use82-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/Victor-Gold/browser-use82
+---
+
+# Browser Use82 Naming Files
+
+## Action
+
+Use snake_case naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: snake_case
+
+---
+id: browser-use82-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/Victor-Gold/browser-use82
+---
+
+# Browser Use82 Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: browser-use82-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/Victor-Gold/browser-use82
+---
+
+# Browser Use82 Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: browser-use82-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/Victor-Gold/browser-use82
+---
+
+# Browser Use82 Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: browser-use82-instinct-file-naming
+trigger: "When creating a new Python file"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: Victor-Gold/browser-use82
+---
+
+# Browser Use82 Instinct File Naming
+
+## Action
+
+Name the file using snake_case
+
+## Evidence
+
+- Pattern in namingConventions.files: snake_case
+
+---
+id: browser-use82-instinct-function-naming
+trigger: "When defining a new function"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: Victor-Gold/browser-use82
+---
+
+# Browser Use82 Instinct Function Naming
+
+## Action
+
+Name the function using camelCase
+
+## Evidence
+
+- Pattern in namingConventions.functions: camelCase
+
+---
+id: browser-use82-instinct-class-naming
+trigger: "When defining a new class"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: Victor-Gold/browser-use82
+---
+
+# Browser Use82 Instinct Class Naming
+
+## Action
+
+Name the class using PascalCase
+
+## Evidence
+
+- Pattern in namingConventions.classes: PascalCase
+
+---
+id: browser-use82-instinct-constant-naming
+trigger: "When defining a constant"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: Victor-Gold/browser-use82
+---
+
+# Browser Use82 Instinct Constant Naming
+
+## Action
+
+Name the constant using SCREAMING_SNAKE_CASE
+
+## Evidence
+
+- Pattern in namingConventions.constants: SCREAMING_SNAKE_CASE
+
+---
+id: browser-use82-instinct-import-style
+trigger: "When importing modules within the package"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: Victor-Gold/browser-use82
+---
+
+# Browser Use82 Instinct Import Style
+
+## Action
+
+Use relative imports
+
+## Evidence
+
+- Pattern in importStyle: relative
+
+---
+id: browser-use82-instinct-export-style
+trigger: "When exporting functions or classes"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: Victor-Gold/browser-use82
+---
+
+# Browser Use82 Instinct Export Style
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- Pattern in exportStyle: named
+
+---
+id: browser-use82-instinct-commit-format
+trigger: "When making a git commit"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: Victor-Gold/browser-use82
+---
+
+# Browser Use82 Instinct Commit Format
+
+## Action
+
+Format the commit message as <type>: <description>, using 'refactor' or 'style' as type when appropriate
+
+## Evidence
+
+- Pattern in commits.prefixes: ['refactor', 'style']
+- Examples: 'refactor: rewrite multi-agent UI in FastHTML', 'style: polish FastHTML UI — gradients, glow, depth, empty states'
+
+---
+id: browser-use82-instinct-commit-length
+trigger: "When writing a commit message"
+confidence: 0.7
+domain: git
+source: repo-analysis
+source_repo: Victor-Gold/browser-use82
+---
+
+# Browser Use82 Instinct Commit Length
+
+## Action
+
+Keep the commit message concise, around 54 characters on average
+
+## Evidence
+
+- Pattern in commits.averageLength: 54
+
+---
+id: browser-use82-instinct-test-location
+trigger: "When adding new tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: Victor-Gold/browser-use82
+---
+
+# Browser Use82 Instinct Test Location
+
+## Action
+
+Place test files in a separate folder from source code
+
+## Evidence
+
+- Pattern in architecture.testLocation: separate
+
+---
+id: browser-use82-instinct-common-folder
+trigger: "When adding new browser agent code"
+confidence: 0.8
+domain: architecture
+source: repo-analysis
+source_repo: Victor-Gold/browser-use82
+---
+
+# Browser Use82 Instinct Common Folder
+
+## Action
+
+Place it in the 'browser_agents' folder
+
+## Evidence
+
+- Pattern in architecture.commonFolders: ['browser_agents']
+
