@@ -13,6 +13,9 @@ __pycache__/
 .venv*
 venv/
 
+# FastHTML session secret (generated at runtime)
+.sesskey
+
 # IDEs
 .vscode/
 .idea/

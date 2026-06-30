@@ -111,9 +111,10 @@ async def _decide(
 ) -> dict:
 	system = _build_system(skills, context)
 	conv = '\n'.join(f"[{m['role']}] {m['content']}" for m in history)
+	conv_block = f'CONVERSATION:\n{conv}' if conv else '(first step — dispatch an agent now)'
 	prompt = (
 		f'{system}\n\nGOAL: {goal}\n\n'
-		f'{"CONVERSATION:\n" + conv if conv else "(first step — dispatch an agent now)"}'
+		f'{conv_block}'
 		f'\n\nYour next action (JSON only):'
 	)
 	raw = await _llm(prompt, model, api_key)
