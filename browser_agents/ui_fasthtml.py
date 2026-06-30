@@ -25,7 +25,7 @@ from .pool import (
 	pause_agent, stop_agent, resume_agent, reset_agent,
 	send_task as pool_send_task, hard_stop,
 )
-from .runs import reflect_on_runs
+from .runs import reflect_on_runs, distill_lessons, load_learned
 from .settings import get_setting, set_setting
 from .skills import load_skills, load_skill, save_skill
 
@@ -216,10 +216,16 @@ def _control_row() -> Section:
 		# Self-improvement
 		Div(
 			Div('Self-Improvement', cls='card-title'),
-			Button('Reflect on recent runs', cls='btn btn-ghost',
-			       hx_post='/reflect', hx_target='#reflect-out', hx_swap='innerHTML',
-			       hx_disabled_elt='this'),
-			Pre('', id='reflect-out', cls='reflect'),
+			Div(
+				Button('Reflect on recent runs', cls='btn btn-ghost',
+				       hx_post='/reflect', hx_target='#reflect-out', hx_swap='innerHTML',
+				       hx_disabled_elt='this'),
+				Button('Auto-improve prompts', cls='btn btn-ghost',
+				       hx_post='/improve', hx_target='#reflect-out', hx_swap='innerHTML',
+				       hx_disabled_elt='this'),
+				cls='row gap',
+			),
+			Pre(load_learned(), id='reflect-out', cls='reflect'),
 			cls='card',
 		),
 		cls='control-row',
@@ -615,6 +621,16 @@ def skill_save(skill_name: str = '', task: str = ''):
 async def reflect():
 	try:
 		return await reflect_on_runs(CONFIG['api_key'], CONFIG['model'])
+	except Exception as e:  # noqa: BLE001
+		return f'Error: {e}'
+
+
+@rt('/improve')
+async def improve():
+	"""Distill recent runs into the persisted standing instructions and show them.
+	Future agents pick these up automatically via extend_system_message."""
+	try:
+		return await distill_lessons(CONFIG['api_key'], CONFIG['model']) or 'No runs to learn from yet.'
 	except Exception as e:  # noqa: BLE001
 		return f'Error: {e}'
 

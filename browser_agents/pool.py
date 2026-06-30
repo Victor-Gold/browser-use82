@@ -5,10 +5,13 @@ from browser_use import Agent, Browser, ChatGoogle
 
 from .chrome import chrome_port, slot_is_ready, launch_slot
 from .config import NUM_AGENTS
-from .runs import log_run
+from .runs import log_run, load_learned, distill_lessons
 
 _agents: dict[int, Agent | None] = {i: None for i in range(NUM_AGENTS)}
 _agent_tasks: dict[int, asyncio.Task | None] = {i: None for i in range(NUM_AGENTS)}
+# Snapshot of the learned instructions baked into each slot's live Agent, so we
+# know when self-improvements have outdated it and the Agent must be rebuilt.
+_agent_learned: dict[int, str] = {i: '' for i in range(NUM_AGENTS)}
 
 
 def pause_agent(slot_id: int) -> str:
@@ -51,6 +54,13 @@ def reset_agent(slot_id: int) -> tuple[str, list]:
 	return f'Agent {slot_id+1} reset', []
 
 
+async def _improve_after_run(api_key: str, model: str) -> None:
+	"""Fire-and-forget self-improvement: distill the latest runs into the standing
+	instructions. distill_lessons swallows its own errors, so a flaky LLM call
+	never surfaces as an unhandled task exception."""
+	await distill_lessons(api_key, model)
+
+
 async def _run_agent(slot_id: int) -> tuple[str, int]:
 	history = await _agents[slot_id].run()
 	result = history.final_result() or 'Done — check the browser.'
@@ -76,10 +86,21 @@ async def send_task(slot_id: int, task: str, api_key: str, model: str, history: 
 
 	try:
 		llm = ChatGoogle(model=model)
+		learned = load_learned()
+
+		# Rebuild the agent if the learned instructions changed since it was
+		# created — the system message is fixed per Agent, so a live (keep_alive)
+		# agent would otherwise never pick up newer self-improvements.
+		if _agents[slot_id] is not None and _agent_learned[slot_id] != learned:
+			_agents[slot_id] = None
 
 		if _agents[slot_id] is None:
 			browser = Browser(cdp_url=f'http://localhost:{chrome_port(slot_id)}', keep_alive=True)
-			_agents[slot_id] = Agent(task=task, llm=llm, browser=browser, max_failures=50)
+			_agents[slot_id] = Agent(
+				task=task, llm=llm, browser=browser, max_failures=50,
+				extend_system_message=learned or None,
+			)
+			_agent_learned[slot_id] = learned
 		else:
 			_agents[slot_id].llm = llm
 			_agents[slot_id].add_new_task(task)
@@ -87,6 +108,9 @@ async def send_task(slot_id: int, task: str, api_key: str, model: str, history: 
 		_agent_tasks[slot_id] = asyncio.create_task(_run_agent(slot_id))
 		result, _ = await _agent_tasks[slot_id]
 		log_run(slot_id, task, result)
+		# Fold this run's outcome back into the standing instructions in the
+		# background so the next agent build self-improves without blocking the UI.
+		asyncio.create_task(_improve_after_run(api_key, model))
 		return history + [msg('user', task), msg('assistant', result)], ''
 
 	except asyncio.CancelledError:
