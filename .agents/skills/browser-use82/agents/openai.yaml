@@ -1,0 +1,6 @@
+interface:
+  display_name: "Browser Use82"
+  short_description: "Repo-specific patterns and workflows for browser-use82"
+  default_prompt: "Use the browser-use82 repo skill to follow existing architecture, testing, and workflow conventions."
+policy:
+  allow_implicit_invocation: true
